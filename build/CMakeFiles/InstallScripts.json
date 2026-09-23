@@ -1,0 +1,7 @@
+{
+	"InstallScripts" : 
+	[
+		"/home/gaukhar/dev/cg-course/build/cmake_install.cmake"
+	],
+	"Parallel" : false
+}

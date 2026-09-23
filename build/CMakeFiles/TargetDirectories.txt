@@ -1,0 +1,3 @@
+/home/gaukhar/dev/cg-course/build/CMakeFiles/cg.dir
+/home/gaukhar/dev/cg-course/build/CMakeFiles/edit_cache.dir
+/home/gaukhar/dev/cg-course/build/CMakeFiles/rebuild_cache.dir
