@@ -1,52 +1,27 @@
-#include <glad/gl.h>      // МІНДЕТТІ: glad әрқашан GLFW-дан БҰРЫН
+#include <glad/gl.h>
 #include <GLFW/glfw3.h>
 
 #include <cmath>
 #include <iostream>
-#include <vector>
 
 const int WIDTH  = 1280;
 const int HEIGHT = 720;
-bool isSpacePressed = false;
 
-// [СЕМИНАР 4] 1-тапсырма: false қойсаң dt өшеді (кадрға тәуелді қозғалыс)
-const bool USE_DT = true;
+int mode = 1;
+int primIndex = 0;
+bool wireframe = false;
 
-// [СЕМИНАР 5] 3-тапсырма: true қойсаң, төртбұрыш екі рет сызылады
-const bool DRAW_TWICE = false;
+GLenum primitives[] = { GL_TRIANGLES, GL_LINE_LOOP, GL_LINE_STRIP, GL_POINTS };
+const char* primNames[] = { "GL_TRIANGLES", "GL_LINE_LOOP", "GL_LINE_STRIP", "GL_POINTS" };
 
-// [СЕМИНАР 4] Анимация күйі
-float angle    = 0.0f;   // шеңбердегі бұрыш (радиан)
-float speed    = 1.5f;   // бұрыштық жылдамдық (рад/сек), W/S өзгертеді
-float timeAcc  = 0.0f;   // жиналған уақыт (пульсация үшін)
-float offsetX  = 0.0f, offsetY = 0.0f;
-float scaleVal = 1.0f;
-const float RADIUS = 0.4f; // [СЕМИНАР 5] орбита радиусы 0.15 -> 0.4
+bool prevKeys[GLFW_KEY_LAST + 1] = { false };
 
-// ШЕЙДЕРЛЕР
-const char* vertexSrc = R"(
-#version 330 core
-layout (location = 0) in vec3 aPos;
-layout (location = 1) in vec3 aColor;   // [СЕМИНАР 3] екінші атрибут: түс
-uniform vec2 uOffset;                   // [СЕМИНАР 4] орын ауыстыру
-uniform float uScale;                   // [СЕМИНАР 4] масштаб (пульсация)
-out vec3 vColor;                        // [СЕМИНАР 3] fragment shader-ге жіберу
-void main() { 
-    gl_Position = vec4(aPos.xy * uScale + uOffset, aPos.z, 1.0); 
-    vColor = aColor;
+bool pressedOnce(GLFWwindow* window, int key) {
+    bool now = glfwGetKey(window, key) == GLFW_PRESS;
+    bool fired = now && !prevKeys[key];
+    prevKeys[key] = now;
+    return fired;
 }
-)";
-
-const char* fragmentSrc = R"(
-#version 330 core
-in vec3 vColor;                         // [СЕМИНАР 3] vertex shader-ден келген түс
-out vec4 FragColor;
-void main() { 
-    FragColor = vec4(vColor, 1.0);
-    // 1-тапсырма (түстерді төңкеру): жоғарыдағы жолды өшіріп, төмендегіні қос
-    // FragColor = vec4(1.0 - vColor, 1.0);
-}
-)";
 
 void onResize(GLFWwindow*, int width, int height) {
     glViewport(0, 0, width, height);
@@ -56,114 +31,115 @@ void processInput(GLFWwindow* window) {
     if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS) {
         glfwSetWindowShouldClose(window, true);
     }
-    if (glfwGetKey(window, GLFW_KEY_SPACE) == GLFW_PRESS) {
-        isSpacePressed = true;
-    } else {
-        isSpacePressed = false;
-    } 
+
+    if (pressedOnce(window, GLFW_KEY_1)) { mode = 1; std::cout << "Rezhim 1: tortburysh (EBO)\n"; }
+    if (pressedOnce(window, GLFW_KEY_2)) { mode = 2; std::cout << "Rezhim 2: indeks {0,1,2}, 3 dana\n"; }
+    if (pressedOnce(window, GLFW_KEY_3)) { mode = 3; std::cout << "Rezhim 3: besburysh\n"; }
+    if (pressedOnce(window, GLFW_KEY_4)) { mode = 4; std::cout << "Rezhim 4: eki tortburysh\n"; }
+    if (pressedOnce(window, GLFW_KEY_5)) { mode = 5; std::cout << "Rezhim 5: eki tortburysh, qarama-qarsy\n"; }
+
+    if (pressedOnce(window, GLFW_KEY_P)) {
+        primIndex = (primIndex + 1) % 4;
+        std::cout << "Primitiv: " << primNames[primIndex] << "\n";
+    }
+
+    if (pressedOnce(window, GLFW_KEY_TAB)) {
+        wireframe = !wireframe;
+        glPolygonMode(GL_FRONT_AND_BACK, wireframe ? GL_LINE : GL_FILL);
+    }
 }
 
-// [СЕМИНАР 3] makeShader(): компиляция + линк + қатені тексеру
 unsigned int makeShader(const char* vsSrc, const char* fsSrc) {
-    int success;
-    char log[1024];
-
     unsigned int vs = glCreateShader(GL_VERTEX_SHADER);
     glShaderSource(vs, 1, &vsSrc, nullptr);
     glCompileShader(vs);
-    glGetShaderiv(vs, GL_COMPILE_STATUS, &success);
-    if (!success) {
-        glGetShaderInfoLog(vs, 1024, nullptr, log);
-        std::cerr << "VERTEX SHADER ERROR:\n" << log << std::endl;
-    }
+    int ok;
+    glGetShaderiv(vs, GL_COMPILE_STATUS, &ok);
+    if (!ok) { char log[1024]; glGetShaderInfoLog(vs, 1024, nullptr, log); std::cerr << log << "\n"; }
 
     unsigned int fs = glCreateShader(GL_FRAGMENT_SHADER);
     glShaderSource(fs, 1, &fsSrc, nullptr);
     glCompileShader(fs);
-    glGetShaderiv(fs, GL_COMPILE_STATUS, &success);
-    if (!success) {
-        glGetShaderInfoLog(fs, 1024, nullptr, log);
-        std::cerr << "FRAGMENT SHADER ERROR:\n" << log << std::endl;
-    }
+    glGetShaderiv(fs, GL_COMPILE_STATUS, &ok);
+    if (!ok) { char log[1024]; glGetShaderInfoLog(fs, 1024, nullptr, log); std::cerr << log << "\n"; }
 
-    unsigned int program = glCreateProgram();
-    glAttachShader(program, vs);
-    glAttachShader(program, fs);
-    glLinkProgram(program);
-    glGetProgramiv(program, GL_LINK_STATUS, &success);
-    if (!success) {
-        glGetProgramInfoLog(program, 1024, nullptr, log);
-        std::cerr << "LINK ERROR:\n" << log << std::endl;
-    }
+    unsigned int prog = glCreateProgram();
+    glAttachShader(prog, vs);
+    glAttachShader(prog, fs);
+    glLinkProgram(prog);
+    glGetProgramiv(prog, GL_LINK_STATUS, &ok);
+    if (!ok) { char log[1024]; glGetProgramInfoLog(prog, 1024, nullptr, log); std::cerr << log << "\n"; }
 
     glDeleteShader(vs);
     glDeleteShader(fs);
-    return program;
+    return prog;
 }
 
-// [СЕМИНАР 4] update(): тек күйді жаңартады (сызбайды)
-void update(GLFWwindow* window, float dt) {
-    // W/S: жылдамдықты басқару (өзгеру жылдамдығы да dt-ға байланысты)
-    float step = USE_DT ? dt : 0.016f;
-    if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS) speed += 2.0f * step;
-    if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS) speed -= 2.0f * step;
-    if (speed < 0.0f) speed = 0.0f;
-    if (speed > 10.0f) speed = 10.0f;
+const char* vertexSrc = R"(
+#version 330 core
+layout (location = 0) in vec3 aPos;
+layout (location = 1) in vec3 aColor;
 
-    // Шеңбер бойымен қозғалу
-    angle   += speed * step;
-    timeAcc += step;
+uniform vec2 uOffset;
 
-    offsetX = RADIUS * std::cos(angle);
-    offsetY = RADIUS * std::sin(angle);
+out vec3 vColor;
 
-    // uScale пульсациясы
-    scaleVal = 0.7f + 0.15f * std::sin(timeAcc * 3.0f);
+void main() {
+    gl_Position = vec4(aPos.xy + uOffset, aPos.z, 1.0);
+    vColor = aColor;
 }
+)";
 
-// [СЕМИНАР 4] draw(): тек сызады (uniform-дарды жібереді)
-// [СЕМИНАР 5] glDrawArrays орнына glDrawElements, indexCount параметрі қосылды
-void draw(unsigned int shader, unsigned int vao, int indexCount,
-          int locOffset, int locScale) {
-    glUseProgram(shader);
-    glUniform1f(locScale, scaleVal);
-    glBindVertexArray(vao);
-
-    // Бірінші төртбұрыш
-    glUniform2f(locOffset, offsetX, offsetY);
-    glDrawElements(GL_TRIANGLES, indexCount, GL_UNSIGNED_INT, 0);
-
-    // [СЕМИНАР 5] 3-тапсырма: екінші төртбұрыш орбитаның қарсы жағында
-    if (DRAW_TWICE) {
-        glUniform2f(locOffset, -offsetX, -offsetY);
-        glDrawElements(GL_TRIANGLES, indexCount, GL_UNSIGNED_INT, 0);
-    }
-}
+const char* fragmentSrc = R"(
+#version 330 core
+in vec3 vColor;
+out vec4 FragColor;
+void main() { FragColor = vec4(vColor, 1.0); }
+)";
 
 int main() {
-    if (!glfwInit()) return -1;
+
+    if (!glfwInit()) {
+        std::cerr << "GLFW iske qosylmady\n";
+        return -1;
+    }
 
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
+#ifdef __APPLE__
+    glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GLFW_TRUE);
+#endif
 
-    GLFWwindow* window = glfwCreateWindow(WIDTH, HEIGHT, "Компьютерлік графика", nullptr, nullptr);
+    GLFWwindow* window = glfwCreateWindow(WIDTH, HEIGHT,
+                                          "Seminar 5 - EBO",
+                                          nullptr, nullptr);
     if (!window) {
+        std::cerr << "Tereze zhasalmady.\n";
         glfwTerminate();
         return -1;
     }
 
     glfwMakeContextCurrent(window);
     glfwSetFramebufferSizeCallback(window, onResize);
-    glfwSwapInterval(0); // VSync өшіру (1-апта)
+    glfwSwapInterval(1);
 
     if (gladLoadGL(glfwGetProcAddress) == 0) {
+        std::cerr << "GLAD zhuktelmedi\n";
         glfwTerminate();
         return -1;
     }
 
-    // [СЕМИНАР 5] 1. Вершина деректері: төртбұрыш, 4 вершина x (позиция + түс)
-    float vertices[] = {
+    std::cout << "OpenGL: " << glGetString(GL_VERSION) << "\n";
+    std::cout << "GPU:    " << glGetString(GL_RENDERER) << "\n";
+    std::cout << "Pernelar: 1-5 rezhim, P primitiv turi, TAB wireframe, ESC shygu\n";
+
+    const int STRIDE = 6 * sizeof(float);
+
+    // =================================================================
+    //  1. ТӨРТБҰРЫШ: 4 вершина + 6 индекс (базалық бөлім)
+    // =================================================================
+    float quadVertices[] = {
         // позиция          // түс
          0.3f,  0.3f, 0.0f,  1.0f, 0.0f, 0.0f,   // 0 - оң жоғарғы
          0.3f, -0.3f, 0.0f,  0.0f, 1.0f, 0.0f,   // 1 - оң төменгі
@@ -171,100 +147,183 @@ int main() {
         -0.3f,  0.3f, 0.0f,  1.0f, 1.0f, 0.0f    // 3 - сол жоғарғы
     };
 
-    // [СЕМИНАР 5] 2. Индекс массиві: 2 үшбұрыш, барлығы сағат тіліне қарсы
-    unsigned int indices[] = {
+    unsigned int quadIndices[] = {
         0, 1, 3,    // бірінші үшбұрыш
         1, 2, 3     // екінші үшбұрыш
     };
-    int indexCount = sizeof(indices) / sizeof(unsigned int); // = 6
 
-    // [СЕМИНАР 5] 3. VAO + VBO + EBO
-    unsigned int vao, vbo, ebo;
-    glGenVertexArrays(1, &vao);
-    glGenBuffers(1, &vbo);
-    glGenBuffers(1, &ebo);                          // ЖАҢА
+    unsigned int vaoQuad, vboQuad, eboQuad;
+    glGenVertexArrays(1, &vaoQuad);
+    glGenBuffers(1, &vboQuad);
+    glGenBuffers(1, &eboQuad);
 
-    glBindVertexArray(vao);                         // VAO бірінші
+    glBindVertexArray(vaoQuad);                       // VAO бірінші
 
-    glBindBuffer(GL_ARRAY_BUFFER, vbo);
-    glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices, GL_STATIC_DRAW);
+    glBindBuffer(GL_ARRAY_BUFFER, vboQuad);
+    glBufferData(GL_ARRAY_BUFFER, sizeof(quadVertices), quadVertices, GL_STATIC_DRAW);
 
-    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ebo);     // ЖАҢА: EBO VAO ішінде байланады
-    glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(indices), indices, GL_STATIC_DRAW);
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, eboQuad);   // EBO — VAO байланып тұрғанда
+    glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(quadIndices), quadIndices, GL_STATIC_DRAW);
 
-    const int STRIDE = 6 * sizeof(float);
-
-    // [СЕМИНАР 3] location = 0: позиция, stride 6 float, offset 0
     glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, STRIDE, (void*)0);
     glEnableVertexAttribArray(0);
-
-    // [СЕМИНАР 3] location = 1: түс, stride 6 float, offset 3 float
     glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, STRIDE, (void*)(3 * sizeof(float)));
     glEnableVertexAttribArray(1);
 
     glBindVertexArray(0);
-    // [СЕМИНАР 5] ЕСКЕРТУ: glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0) ЖАЗЫЛМАЙДЫ!
-    // Ол EBO-ны VAO-дан үзіп тастайды да, экран қара болады.
+    // ЕСКЕРТУ: glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0) ЖАЗЫЛМАЙДЫ — VAO-дан EBO жоғалып кетеді
 
-    // Сплошная заливка полигонов
-    glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+    // =================================================================
+    //  1-ТАПСЫРМА: индекстерді бұзу — {0, 1, 2}, сызу кезінде саны 3
+    //  Вершина деректері сол күйінде (vboQuad ортақ), тек индекс бөлек
+    // =================================================================
+    unsigned int brokenIndices[] = { 0, 1, 2 };
 
-    // [СЕМИНАР 3] ШЕЙДЕРЛЕРДІ makeShader() арқылы жасау
+    unsigned int vaoBroken, eboBroken;
+    glGenVertexArrays(1, &vaoBroken);
+    glGenBuffers(1, &eboBroken);
+
+    glBindVertexArray(vaoBroken);
+
+    glBindBuffer(GL_ARRAY_BUFFER, vboQuad);           // дәл сол вершина деректері
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, eboBroken);
+    glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(brokenIndices), brokenIndices, GL_STATIC_DRAW);
+
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, STRIDE, (void*)0);
+    glEnableVertexAttribArray(0);
+    glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, STRIDE, (void*)(3 * sizeof(float)));
+    glEnableVertexAttribArray(1);
+
+    glBindVertexArray(0);
+
+    // =================================================================
+    //  2-ТАПСЫРМА: бесбұрыш — 5 вершина, 3 үшбұрыш, 9 индекс
+    //  Бұрыштар: -90, -18, 54, 126, 198 градус, радиус 0.3
+    //  0-вершина барлық үшбұрышта қайталанады (орталық рөлін атқарады)
+    // =================================================================
+    float pentVertices[5 * 6];
+    float angles[5] = { -90.0f, -18.0f, 54.0f, 126.0f, 198.0f };
+    float pentColors[5][3] = {
+        {1.0f, 0.0f, 0.0f},
+        {1.0f, 0.6f, 0.0f},
+        {1.0f, 1.0f, 0.0f},
+        {0.0f, 1.0f, 0.0f},
+        {0.0f, 0.5f, 1.0f}
+    };
+    const float PI = 3.14159265f;
+    for (int i = 0; i < 5; i++) {
+        float a = angles[i] * PI / 180.0f;
+        pentVertices[i * 6 + 0] = std::cos(a) * 0.3f;
+        pentVertices[i * 6 + 1] = std::sin(a) * 0.3f;
+        pentVertices[i * 6 + 2] = 0.0f;
+        pentVertices[i * 6 + 3] = pentColors[i][0];
+        pentVertices[i * 6 + 4] = pentColors[i][1];
+        pentVertices[i * 6 + 5] = pentColors[i][2];
+    }
+
+    unsigned int pentIndices[] = {
+        0, 1, 2,
+        0, 2, 3,
+        0, 3, 4
+    };
+
+    unsigned int vaoPent, vboPent, eboPent;
+    glGenVertexArrays(1, &vaoPent);
+    glGenBuffers(1, &vboPent);
+    glGenBuffers(1, &eboPent);
+
+    glBindVertexArray(vaoPent);
+
+    glBindBuffer(GL_ARRAY_BUFFER, vboPent);
+    glBufferData(GL_ARRAY_BUFFER, sizeof(pentVertices), pentVertices, GL_STATIC_DRAW);
+
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, eboPent);
+    glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(pentIndices), pentIndices, GL_STATIC_DRAW);
+
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, STRIDE, (void*)0);
+    glEnableVertexAttribArray(0);
+    glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, STRIDE, (void*)(3 * sizeof(float)));
+    glEnableVertexAttribArray(1);
+
+    glBindVertexArray(0);
+
+    // -----------------------------------------------------------------
     unsigned int shader = makeShader(vertexSrc, fragmentSrc);
-
-    // [СЕМИНАР 4] Uniform орнын БІР РЕТ кэштеу (циклге дейін)
     int locOffset = glGetUniformLocation(shader, "uOffset");
-    int locScale  = glGetUniformLocation(shader, "uScale");
 
-    // Переменные для FPS (1-апта)
-    double lastTime = glfwGetTime();
-    int frameCount = 0;
+    glPointSize(10.0f);   // GL_POINTS үшін
 
-    // [СЕМИНАР 4] dt үшін алдыңғы кадр уақыты
-    double prevTime = glfwGetTime();
+    float lastFrame = (float)glfwGetTime();
+    float angle = 0.0f;
+    float speed = 1.5f;
 
-    // НЕГІЗГІ ЦИКЛ
     while (!glfwWindowShouldClose(window)) {
-        // [СЕМИНАР 4] dt есептеу (үш жол)
-        double now = glfwGetTime();
-        float dt = (float)(now - prevTime);
-        prevTime = now;
 
-        // 1-АПТА: Вывод FPS в консоль
-        double currentTime = glfwGetTime();
-        frameCount++;
-        if (currentTime - lastTime >= 1.0) {
-            std::cout << "FPS: " << frameCount << std::endl;
-            frameCount = 0;
-            lastTime = currentTime;
-        }
+        // --- уақыт ---
+        float now = (float)glfwGetTime();
+        float dt = now - lastFrame;
+        lastFrame = now;
 
+        // --- ЖАҢАРТУ ---
         processInput(window);
+        angle += speed * dt;
 
-        // [СЕМИНАР 4] Күйді жаңарту
-        update(window, dt);
+        GLenum prim = primitives[primIndex];
 
-        // 1-АПТА: Динамический фон + Белый фон по нажатию пробела
-        if (isSpacePressed) {
-            glClearColor(1.0f, 1.0f, 1.0f, 1.0f); // Белый фон при Пробеле
-        } else {
-            float t = (float)glfwGetTime();
-            float r = (std::sin(t * 2.0f) + 1.0f) * 0.5f * 0.25f;
-            float g = (std::sin(t * 1.5f) + 1.0f) * 0.5f * 0.25f;
-            glClearColor(r, g, 0.25f, 1.0f);      // Плавно меняющийся фон
-        }
+        // --- СЫЗУ ---
+        glClearColor(0.1f, 0.1f, 0.15f, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT);
 
-        // СЫЗУ КӨРІНІСІ
-        draw(shader, vao, indexCount, locOffset, locScale);
+        glUseProgram(shader);
+
+        if (mode == 1) {
+            // базалық: шеңбер бойымен қозғалатын төртбұрыш
+            glBindVertexArray(vaoQuad);
+            glUniform2f(locOffset, std::cos(angle) * 0.4f, std::sin(angle) * 0.4f);
+            glDrawElements(prim, 6, GL_UNSIGNED_INT, 0);   // 6 = индекс саны, вершина емес
+        }
+        else if (mode == 2) {
+            // 1-тапсырма: бір ғана үшбұрыш (индекс {0,1,2}, саны 3)
+            glBindVertexArray(vaoBroken);
+            glUniform2f(locOffset, std::cos(angle) * 0.4f, std::sin(angle) * 0.4f);
+            glDrawElements(prim, 3, GL_UNSIGNED_INT, 0);
+        }
+        else if (mode == 3) {
+            // 2-тапсырма: бесбұрыш, 9 индекс
+            glBindVertexArray(vaoPent);
+            glUniform2f(locOffset, std::cos(angle) * 0.4f, std::sin(angle) * 0.4f);
+            glDrawElements(prim, 9, GL_UNSIGNED_INT, 0);
+        }
+        else if (mode == 4) {
+            // 3-тапсырма: екі төртбұрыш, бір VAO, екі uniform + draw жұбы
+            glBindVertexArray(vaoQuad);
+            glUniform2f(locOffset, -0.4f, 0.0f);
+            glDrawElements(prim, 6, GL_UNSIGNED_INT, 0);
+            glUniform2f(locOffset, 0.4f, 0.0f);
+            glDrawElements(prim, 6, GL_UNSIGNED_INT, 0);
+        }
+        else if (mode == 5) {
+            // қосымша: екеуі де қозғалады, қарама-қарсы бағытта
+            glBindVertexArray(vaoQuad);
+            glUniform2f(locOffset, std::cos(angle) * 0.4f, std::sin(angle) * 0.4f);
+            glDrawElements(prim, 6, GL_UNSIGNED_INT, 0);
+            glUniform2f(locOffset, -std::cos(angle) * 0.4f, -std::sin(angle) * 0.4f);
+            glDrawElements(prim, 6, GL_UNSIGNED_INT, 0);
+        }
 
         glfwSwapBuffers(window);
         glfwPollEvents();
     }
 
-    glDeleteVertexArrays(1, &vao);
-    glDeleteBuffers(1, &vbo);
-    glDeleteBuffers(1, &ebo);      // [СЕМИНАР 5] ЖАҢА
+    // --- тазалау ---
+    glDeleteVertexArrays(1, &vaoQuad);
+    glDeleteVertexArrays(1, &vaoBroken);
+    glDeleteVertexArrays(1, &vaoPent);
+    glDeleteBuffers(1, &vboQuad);
+    glDeleteBuffers(1, &vboPent);
+    glDeleteBuffers(1, &eboQuad);
+    glDeleteBuffers(1, &eboBroken);
+    glDeleteBuffers(1, &eboPent);
     glDeleteProgram(shader);
 
     glfwTerminate();
